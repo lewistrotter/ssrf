@@ -1,6 +1,5 @@
 # SSRF
 
-[![PyPI version](https://img.shields.io/pypi/v/ssrf.svg)](https://pypi.org/project/ssrf/)
 [![Python Version](https://img.shields.io/pypi/pyversions/ssrf.svg)](https://pypi.org/project/ssrf/)
 [![License](https://img.shields.io/pypi/l/ssrf.svg)](LICENSE)
 
@@ -14,9 +13,7 @@ based on Wang et al. (2022) but with XGBoost, numba and dask for improved speed 
 
 - [Introduction](#introduction)
 - [Installation](#installation)
-- [Quick Example](#quick-example)
 - [Usage](#usage)
-- [License](#license)
 - [Citation](#citation)
 
 ---
@@ -26,10 +23,11 @@ based on Wang et al. (2022) but with XGBoost, numba and dask for improved speed 
 SSRF (Spatial-Spectral Random Forest) is a simple but effective method for gap-filling thick 
 cloud pixels in satellite (e.g., Landsat, Sentinel-2) image pixels (Wang et al., 2022). The 
 technique uses spatial spatially adjacent and multispectral information of known images 
-simultaneously based on random forests. However, the technique is notoriously memory-heavy and 
-slow in Python. This implementation is virtually the same as the original implementation 
-(Wang et al. 2022) except we use XGBoost, numba, and dask (optional) to reduce processing time 
-improve scalability. 
+simultaneously based on random forests. 
+
+The SSRF technique is notoriously memory-heavy and slow in Python. This implementation is 
+virtually the same as the original implementation (Wang et al. 2022) except we use XGBoost, 
+numba, and dask (optional) to reduce processing time improve scalability. 
 
 Key features:
 - Modern gap-filling algorithm;

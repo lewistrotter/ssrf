@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ssrf"
+version = "0.1.0"
+description = "Spatial-Spectral Random Forest for satellite image gap-filling."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [
+  { name="Lewis Trotter", email="mrlewie@outlook.com" }
+]
+
+dependencies = [
+    "numpy",
+    "dask",
+    "xarray",
+    "numba",
+    "xgboost"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/lewistrotter/ssrf"
+"Bug Tracker" = "https://github.com/lewistrotter/ssrf/issues"

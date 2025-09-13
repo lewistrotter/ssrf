@@ -44,4 +44,5 @@ Key features:
 
 
 ## Citation
-If you use SSRF in a publication, please cite original authors: *Wang, Q., Wang, L., Zhu, X., Ge, Y., Tong, X., & Atkinson, P.M. (2022). *Remote sensing image gap filling based on spatial-spectral random forests*. Science of Remote Sensing, 5, 100048. https://doi.org/10.1016/j.srs.2022.100048
+If you use SSRF in a publication, please cite original authors: 
+Wang, Q., Wang, L., Zhu, X., Ge, Y., Tong, X., & Atkinson, P.M. (2022). *Remote sensing image gap filling based on spatial-spectral random forests*. Science of Remote Sensing, 5, 100048. https://doi.org/10.1016/j.srs.2022.100048

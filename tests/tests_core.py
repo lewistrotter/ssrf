@@ -26,6 +26,7 @@ def main():
     n_samples = 2000000
 
     xgb_params = {
+        'num_boost_round': 100,
         'objective': 'reg:squarederror',
         'tree_method': 'hist',
         'learning_rate': 0.1,
@@ -33,7 +34,6 @@ def main():
         'device': 'cuda',
         'nthread': -1
     }
-
 
     da_out = ssrf.run(
         da_x=da_x,  # inputs, features, predictors

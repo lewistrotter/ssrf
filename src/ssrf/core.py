@@ -1,9 +1,6 @@
 
-# imports
 import gc
 import time
-
-import dask
 import numpy as np
 import numba as nb
 import xarray as xr
@@ -207,6 +204,21 @@ def _fill_via_predict_numpy(
     return arr_y_out
 
 
+def _get_default_xgb_params():
+
+    xgb_params = {
+        'num_boost_round': 100,
+        'objective': 'reg:squarederror',
+        'tree_method': 'hist',
+        'learning_rate': 0.1,
+        'max_depth': 8,
+        'device': 'cuda',
+        'nthread': -1
+    }
+
+    return xgb_params
+
+
 def run(
         da_x: xr.DataArray,
         da_y: xr.DataArray,
@@ -247,14 +259,19 @@ def run(
         n_samples
     )
 
+    if xgb_params is None:
+        xgb_params = _get_default_xgb_params
+
+    num_boost_round = xgb_params.pop('num_boost_round')
+
     models = {}
     for i in range(arr_y.shape[1]):
         print(f'Training variable {i + 1}.')
         dtrain = xgb.DMatrix(arr_x, arr_y[:, i])
         models[i] = xgb.train(
-            params,
+            xgb_params,
             dtrain,
-            num_boost_round=100
+            num_boost_round=num_boost_round
         )
 
     del arr_y, arr_x

@@ -7,7 +7,6 @@ import dask
 import numpy as np
 import numba as nb
 import xarray as xr
-import rioxarray
 import xgboost as xgb
 
 
@@ -208,11 +207,12 @@ def _fill_via_predict_numpy(
     return arr_y_out
 
 
-def ssrf(
+def run(
         da_x: xr.DataArray,
         da_y: xr.DataArray,
         nodata: int | float,
-        n_samples: int | None
+        n_samples: int | None,
+        xgb_params: dict
 ) -> xr.DataArray:
 
     if not isinstance(da_x, xr.DataArray):
@@ -234,55 +234,37 @@ def ssrf(
     if nodata is None:
         raise ValueError('Input nodata value must be provided.')
 
-    is_x_lazy = _is_lazy(da_x.data)
-    is_y_lazy = _is_lazy(da_y.data)
+    #is_x_lazy = _is_lazy(da_x.data)
+    #is_y_lazy = _is_lazy(da_y.data)
 
-    if not is_x_lazy and not is_y_lazy:
-        arr_x, arr_y = _extract_train_samples_numpy(
-            da_x.data,
-            da_y.data,
-            nodata,
-            n_samples
+    # if not is_x_lazy and not is_y_lazy:
+    # ...
+
+    arr_x, arr_y = _extract_train_samples_numpy(
+        da_x.data,
+        da_y.data,
+        nodata,
+        n_samples
+    )
+
+    models = {}
+    for i in range(arr_y.shape[1]):
+        print(f'Training variable {i + 1}.')
+        dtrain = xgb.DMatrix(arr_x, arr_y[:, i])
+        models[i] = xgb.train(
+            params,
+            dtrain,
+            num_boost_round=100
         )
-    else:
-        raise NotImplementedError('Only numpy backed xr supported currently.')
-
-    params = {
-        #'objective': 'reg:squarederror',
-        #'tree_method': 'hist',
-        'learning_rate': 0.1,
-        'max_depth': 8,
-        #'device': 'cuda',
-        'device': 'cpu',
-        'nthread': -1
-    }
-
-    if not is_x_lazy and not is_y_lazy:
-        models = {}
-        for i in range(arr_y.shape[1]):
-            print(f'Training variable {i + 1}.')
-            dtrain = xgb.DMatrix(arr_x, arr_y[:, i])
-            models[i] = xgb.train(
-                params,
-                dtrain,
-                num_boost_round=100
-            )
-
-
-
-
 
     del arr_y, arr_x
     gc.collect()
 
-    if not is_x_lazy and not is_y_lazy:
-        arr_i, arr_x = _extract_predict_samples_numpy(
-            da_x.data,
-            da_y.data,
-            nodata
-        )
-    else:
-        raise NotImplementedError('Only numpy or dask backed xr supported.')
+    arr_i, arr_x = _extract_predict_samples_numpy(
+        da_x.data,
+        da_y.data,
+        nodata
+    )
 
     arr_x = xgb.DMatrix(arr_x)
     arr_y = []
@@ -306,45 +288,3 @@ def ssrf(
     )
 
     return da_out
-
-
-def main(client=None):
-
-    ds_cloud = xr.open_dataset(
-        r'E:\PMA Unmixing\data\storage\07_apply_masks\2018-02-21.nc',
-        mask_and_scale=False,
-        decode_coords='all'
-    ).drop_vars('spatial_ref')
-
-    ds_clear = xr.open_dataset(
-        r'E:\PMA Unmixing\data\storage\07_apply_masks\2018-02-11.nc',
-        mask_and_scale=False,
-        decode_coords='all'
-    ).drop_vars('spatial_ref')
-
-    #ds_cloud = ds_cloud.isel(x=slice(5000, -1), y=slice(0, 5000))
-    #ds_clear = ds_clear.isel(x=slice(5000, -1), y=slice(0, 5000))
-
-    da_x = ds_clear.to_array().compute()
-    da_y = ds_cloud.to_array().compute()
-
-    da_x = da_x.chunk({'variable': -1, 'y': 1024, 'x': 1024})
-    da_y = da_y.chunk({'variable': -1, 'y': 1024, 'x': 1024})
-
-    #win_size = 3  # 1 all around
-    nodata = -999
-    n_samples = 2000000
-
-    da_out = ssrf(
-        da_x=da_x,  # inputs, features, predictors
-        da_y=da_y,  # target
-        nodata=nodata,
-        n_samples=n_samples
-    )
-
-    return
-
-
-if __name__ == '__main__':
-
-    main()

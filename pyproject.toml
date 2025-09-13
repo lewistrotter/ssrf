@@ -14,9 +14,8 @@ authors = [
 ]
 
 dependencies = [
-    "numpy",
-    "dask",
     "xarray",
+    #"dask",
     "numba",
     "xgboost"
 ]

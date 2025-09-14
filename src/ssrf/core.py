@@ -1,6 +1,7 @@
 
 import gc
 import time
+import dask
 import numpy as np
 import numba as nb
 import xarray as xr
@@ -259,6 +260,9 @@ def run(
         n_samples
     )
 
+    if arr_x.size == 0 or arr_y.size == 0:
+        raise ValueError('Input data must have at least one training sample.')
+
     if xgb_params is None:
         xgb_params = _get_default_xgb_params
 
@@ -282,6 +286,9 @@ def run(
         da_y.data,
         nodata
     )
+
+    if arr_i.size == 0 or arr_x.size == 0:
+        raise ValueError('Input data must have at least one prediction sample.')
 
     arr_x = xgb.DMatrix(arr_x)
     arr_y = []

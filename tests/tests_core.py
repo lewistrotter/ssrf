@@ -1,5 +1,6 @@
 
 
+import numcodecs
 import xarray as xr
 import rioxarray
 
@@ -48,4 +49,10 @@ def main():
 
 if __name__ == '__main__':
 
+    # TODO: use optimum to determine genral best params
+
     da_out = main()
+
+    ds_out = da_out.to_dataset('variable')
+    ds_out = ds_out.chunk({'y': 1024, 'x': 1024})
+

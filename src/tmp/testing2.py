@@ -163,163 +163,164 @@ def _random_sampling_dk(
     return arr_out
 
 
-@nb.njit
-def _extract_train_x_y_set(
-        arr_grid: np.ndarray,
-        arr_x: np.ndarray,
-        arr_y: np.ndarray
-) -> tuple:
-
-    n_x_vars, y_size, x_size = arr_x.shape
-    n_x_vars *= 9  # 9 pix per var per win
-    n_y_vars = arr_y.shape[0]
-
-    n_samples = 0
-    for yi in range(1, y_size - 1):
-        for xi in range(1, x_size - 1):
-            if arr_grid[yi, xi]:
-                n_samples += 1
-
-    if n_samples == 0:
-        return (
-            np.empty((0, n_x_vars), arr_x.dtype),
-            np.empty((0, n_y_vars), arr_y.dtype)
-        )
-
-    arr_x_out = np.empty((n_samples, n_x_vars), arr_x.dtype)
-    arr_y_out = np.empty((n_samples, n_y_vars), arr_y.dtype)
-
-    i = 0
-    for yi in range(1, y_size - 1):
-        for xi in range(1, x_size - 1):
-            if arr_grid[yi, xi]:
-                arr_x_out[i, :] = arr_x[:, yi - 1:yi + 2, xi - 1:xi + 2].ravel()
-                arr_y_out[i, :] = arr_y[:, yi, xi]
-                i += 1
-
-    return arr_x_out, arr_y_out
-
-
-def _extract_train_set_np(
-        arr_x: np.ndarray,
-        arr_y: np.ndarray,
-        nodata: int | float,
-        n_samples: int | None,
-        rand_seed: int
-) -> tuple:
-
-    # clamp nodata across vars. true == nodata
-    arr_nd_x = np.any(arr_x == nodata, axis=0)
-    arr_nd_y = np.any(arr_y == nodata, axis=0)
-
-    # train grid. y = valid and x win = all valid. true = train
-    arr_grid = _make_train_grid(arr_nd_x, arr_nd_y)
-
-    if n_samples:
-        arr_grid = _random_sampling_np(
-            arr_grid,
-            n_samples,
-            rand_seed
-        )
-
-    X, y = _extract_train_x_y_set(arr_grid, arr_x, arr_y)
-
-    return X, y
-
-
-def _extract_train_set_dk(
-        arr_x: np.ndarray,
-        arr_y: np.ndarray,
-        nodata: int | float,
-        n_samples: int | None,
-        rand_seed: int
+@nb.njit(parallel=True)
+def _extract_train_x_set(
+        arr: np.ndarray,
+        arr_smp: np.ndarray
 ) -> np.ndarray:
 
-    # clamp nodata across vars. true == nodata
-    arr_nd_x = darray.any(arr_x == nodata, axis=0)
-    arr_nd_y = darray.any(arr_y == nodata, axis=0)
+    n_vars = arr.shape[0] * 9  # 9 pix per var per win
 
-    # train grid. y = valid and x win = all valid. true = train
-    arr_grid = map_overlap(
-        _make_train_grid,
-        arr_nd_x,
-        arr_nd_y,
-        depth=(1, 1),
-        boundary=True,  # true == invalid going in, always
-        dtype=np.bool_
-    )
+    n_samples = arr_smp[1:-1, 1:-1].sum()  # exclude edges for valid sample size
+    if n_samples == 0:
+        return np.empty((0, n_vars), arr.dtype)
 
-    # TODO: count true <= n_samples per chunk for
+    arr_idx = np.empty((n_samples, 2), np.int64)
 
-    if n_samples:
-        arr_grid = map_blocks(
-            _random_sampling_dk,
-            arr_grid,
-            n_samples=n_samples,
-            rand_seed=rand_seed,
-            dtype=np.bool_
-        )
+    i = 0  # safe as prange not used
+    for yi in range(1, arr_smp.shape[0] - 1):
+        for xi in range(1, arr_smp.shape[1] - 1):
+            if arr_smp[yi, xi]:
+                arr_idx[i, 0], arr_idx[i, 1] = yi, xi
+                i += 1
 
-    arr_grid_pad = overlap(
-        arr_grid,
-        depth=(1, 1),
-        boundary=False   # false == invalid pixels
-    )
+    arr_out = np.empty((n_samples, n_vars), arr.dtype)
 
-    arr_x_pad = overlap(
-        arr_x,
+    for i in nb.prange(n_samples):
+        yi, xi = arr_idx[i, 0], arr_idx[i, 1]
+        arr_sel = arr[:, yi - 1:yi + 1 + 1, xi - 1:xi + 1 + 1]
+        arr_out[i, :] = arr_sel.ravel()
+
+    return arr_out
+
+
+# TODO: combine X, y func here like predict
+def _extract_train_x_set_lazy(
+        arr: np.ndarray,
+        arr_smp: np.ndarray,
+        nodata: int | float
+) -> np.ndarray:
+
+    n_vars = arr.shape[0] * 9  # 9 pix per var per win
+
+    arr_pad = overlap(
+        arr,
         depth=(0, 1, 1),
         boundary=nodata,
     )
 
-    arr_y_pad = overlap(
-        arr_y,
-        depth=(0, 1, 1),
-        boundary=nodata
+    arr_smp_pad = overlap(
+        arr_smp,
+        depth=(1, 1),
+        boundary=False   # false == invalid pixels
     )
 
-    v_x_size = arr_x.shape[0] * 9  # 9 pix per var per win
-    v_y_size = arr_y.shape[0]
-
-    g_delays = arr_grid_pad.to_delayed().ravel()
-    x_delays = arr_x_pad.to_delayed().ravel()
-    y_delays = arr_y_pad.to_delayed().ravel()
-
-    xs, ys = [], []
-    for g, x, y, offset in zip(g_delays, x_delays, y_delays):
-        delay = dask.delayed(_extract_train_x_y_set)(
-            g, x, y, nodata
+    # output is ragged thus delayed approach better
+    X1 = darray.concatenate([
+        darray.from_delayed(
+            dask.delayed(_extract_train_x_set)(x, smp),
+            shape=(np.nan, n_vars),
+            dtype=arr.dtype
         )
-
-        # unpack x output. wrap as dask. shape == np.nan for ragged
-        xs.append(
-            darray.from_delayed(
-                dask.delayed(lambda d: d[0])(delay),
-                shape=(np.nan, v_x_size),
-                dtype=arr_x_pad.dtype
-            )
+        for x, smp in zip(
+            arr_pad.to_delayed().ravel(),
+            arr_smp_pad.to_delayed().ravel()
         )
+    ])
 
-        # as above but for y output only
-        ys.append(
-            darray.from_delayed(
-                dask.delayed(lambda d: d[1])(delay),
-                shape=(np.nan, v_y_size),
-                dtype=arr_y_pad.dtype
-            )
+    X1 = X1.compute()
+
+    # # this works... based on dask blog  FIXME: output slightly different to above.
+    # X2 = map_blocks(
+    #     _extract_train_x_set,
+    #     arr_pad,
+    #     arr_smp_pad,
+    #     drop_axis=(2,),
+    #     new_axis=(1, ),
+    #     dtype=np.int16,
+    #     meta=np.empty((0, 90), dtype=np.int16)
+    # )
+    #
+    # X2 = X2.compute()
+
+
+    X = None
+
+
+    return X
+
+
+@nb.njit(parallel=True)
+def _extract_train_y_set(
+        arr: np.ndarray,
+        arr_smp: np.ndarray
+) -> np.ndarray:
+
+    n_vars = arr.shape[0]
+
+    n_samples = arr_smp[1:-1, 1:-1].sum()  # exclude edges for valid sample size
+    if n_samples == 0:
+        return np.empty((0, n_vars), arr.dtype)
+
+    arr_idx = np.empty((n_samples, 2), np.int64)
+
+    i = 0
+    for yi in range(1, arr_smp.shape[0] - 1):
+        for xi in range(1, arr_smp.shape[1] - 1):
+            if arr_smp[yi, xi]:
+                arr_idx[i, 0], arr_idx[i, 1] = yi, xi
+                i += 1
+
+    arr_out = np.empty((n_samples, n_vars), arr.dtype)
+
+    for i in nb.prange(n_samples):
+        yi, xi = arr_idx[i, 0], arr_idx[i, 1]
+        arr_out[i, :] = arr[:, yi, xi]
+
+    return arr_out
+
+
+def _extract_train_y_set_lazy(
+        arr: np.ndarray,
+        arr_smp: np.ndarray,
+        nodata: int | float
+) -> np.ndarray:
+
+    n_vars = arr.shape[0] * 9  # 9 pix per var per win
+
+    arr_pad = overlap(
+        arr,
+        depth=(0, 1, 1),
+        boundary=nodata,
+    )
+
+    arr_smp_pad = overlap(
+        arr_smp,
+        depth=(1, 1),
+        boundary=False  # false == invalid pixels
+    )
+
+    # output is ragged thus delayed approach better
+    y = darray.concatenate([
+        darray.from_delayed(
+            dask.delayed(_extract_train_y_set)(y, smp),
+            shape=(np.nan, n_vars),
+            dtype=arr.dtype
         )
+        for y, smp in zip(
+            arr_pad.to_delayed().ravel(),
+            arr_smp_pad.to_delayed().ravel()
+        )
+    ])
 
-    X = darray.concatenate(xs, axis=0)
-    y = darray.concatenate(ys, axis=0)
-
-    return X, y
+    return y
 
 
 def extract_train_set(
         arr_x: np.ndarray | darray.Array,
         arr_y: np.ndarray | darray.Array,
         nodata: int | float,
-        n_samples: int | None = None,
+        n_samples: int | None,
         rand_seed: int = 0
 ) -> tuple:
 
@@ -327,26 +328,51 @@ def extract_train_set(
     is_y_lazy = _is_lazy(arr_y)
 
     if not is_x_lazy and not is_y_lazy:
-        X, y = _extract_train_set_np(
-            arr_x,
-            arr_y,
-            nodata,
-            n_samples,
-            rand_seed
-        )
+        arr_smp = _make_train_grid(
+            np.any(arr_x == nodata, axis=0),
+            np.any(arr_y == nodata, axis=0)
+        )  # true where valid for train in output
+
+        if n_samples:
+            arr_smp = _random_sampling_np(
+                arr_smp,
+                n_samples,
+                rand_seed
+            )
+
+        X = _extract_train_x_set(arr_x, arr_smp)
+        y = _extract_train_y_set(arr_y, arr_smp)
 
     elif is_x_lazy and is_y_lazy:
-        X, y = _extract_train_set_dk(
-            arr_x,
-            arr_y,
-            nodata,
-            n_samples,
-            rand_seed
-        )
+        arr_smp = map_overlap(
+            _make_train_grid,
+            darray.any(arr_x == nodata, axis=0),
+            darray.any(arr_y == nodata, axis=0),
+            depth=(1, 1),
+            boundary=True,  # true == invalid going in, always
+            dtype=np.bool_
+        )  # true where valid for train in output
+
+        if n_samples:
+            arr_smp = map_blocks(
+                _random_sampling_dk,
+                arr_smp,
+                n_samples=n_samples,
+                rand_seed=rand_seed,
+                dtype=np.bool_
+            )
+
+        # FIXME: do a persist here to prevent repeat computes
+        # FIXME: consider extracting per-chunk counts of true (try with and without pute) for ragged output
+
+        X = _extract_train_x_set_lazy(arr_x, arr_smp, nodata)
+        y = _extract_train_y_set_lazy(arr_y, arr_smp, nodata)
+
     else:
         raise TypeError('Only numpy or dask arrays are supported.')
 
     return X, y
+
 
 
 
@@ -399,6 +425,7 @@ def train_xgb_models(
         raise TypeError('Only numpy or dask arrays are supported.')
 
     return models
+
 
 # endregion
 
@@ -639,7 +666,6 @@ def _fill_via_predict_dk(
 
     return arr_fill
 
-
 def _apply_fill_via_predict_dk(
         arr_fill: darray.Array,
         arr_i: darray.Array,
@@ -755,36 +781,36 @@ def run(
         nodata
     )
 
-    # arr_i = arr_i.compute_chunk_sizes()
-    # X = X.compute_chunk_sizes()
+    arr_i = arr_i.compute_chunk_sizes()
+    X = X.compute_chunk_sizes()
 
 
-    # dtrain = xgb.DMatrix(X)
-    #
-    # y_pred = []
-    # for i, model in models.items():
-    #     print(f'Predicting y variable {i + 1}.')
-    #     y_pred.append(model.predict(dtrain))
-    #
-    # y_pred = np.column_stack(y_pred)
-    #
-    # arr_y_pred = arr_X[:, 4 + 9*np.arange(10)]
-    #
-    # arr_fill = da_y.data  # TODO: if fill_inplace use arr_y, else .full()
-    #
-    # arr_out = fill_via_predict(
-    #     arr_fill,
-    #     arr_i,
-    #     arr_y_pred,
-    #     nodata
-    # )
-    #
-    # da_out = xr.DataArray(
-    #     arr_out,
-    #     dims=da_y.dims,
-    #     coords=da_y.coords,
-    #     attrs=da_y.attrs
-    # )
+    dtrain = xgb.DMatrix(X)
+
+    y_pred = []
+    for i, model in models.items():
+        print(f'Predicting y variable {i + 1}.')
+        y_pred.append(model.predict(dtrain))
+
+    y_pred = np.column_stack(y_pred)
+
+    arr_y_pred = arr_X[:, 4 + 9*np.arange(10)]
+
+    arr_fill = da_y.data  # TODO: if fill_inplace use arr_y, else .full()
+
+    arr_out = fill_via_predict(
+        arr_fill,
+        arr_i,
+        arr_y_pred,
+        nodata
+    )
+
+    da_out = xr.DataArray(
+        arr_out,
+        dims=da_y.dims,
+        coords=da_y.coords,
+        attrs=da_y.attrs
+    )
 
     return da_out
 
@@ -795,14 +821,14 @@ def main():
         r'E:\PMA Unmixing\data\storage\07_apply_masks\2018-02-21.nc',
         mask_and_scale=False,
         decode_coords='all',
-        # chunks={}
+        chunks={}
     ).drop_vars('spatial_ref')
 
     ds_clear = xr.open_dataset(
         r'E:\PMA Unmixing\data\storage\07_apply_masks\2018-02-11.nc',
         mask_and_scale=False,
         decode_coords='all',
-        # chunks={}
+        chunks={}
     ).drop_vars('spatial_ref')
 
     da_x = ds_clear.to_array()#.compute()
@@ -811,8 +837,8 @@ def main():
     #da_x = da_x.isel(x=slice(5000, None), y=slice(0, 5000))
     #da_y = da_y.isel(x=slice(5000, None), y=slice(0, 5000))
 
-    # da_x = da_x.chunk({'variable': -1})#.persist()  # 'y': 1024, 'x': 1024
-    # da_y = da_y.chunk({'variable': -1})#.persist()  # 'y': 1024, 'x': 1024
+    da_x = da_x.chunk({'variable': -1})#.persist()  # 'y': 1024, 'x': 1024
+    da_y = da_y.chunk({'variable': -1})#.persist()  # 'y': 1024, 'x': 1024
 
     nodata = -999
     n_samples = 2000000
